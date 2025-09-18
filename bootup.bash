@@ -3,7 +3,7 @@
 HOME_DIR="/home/ubuntu"
 MACHINE_INVENTORY="${HOME_DIR}/machine.txt"
 CLUSTER_NAME="kubernetes-the-hard-way"
-K8S_API_SERVER="https://server.kubernetes.local"
+K8S_API_SERVER="https://127.0.0.1"
 K8S_API_SERVER_PORT=6443
 CURRENT_HOSTNAME=$(hostname)
 
@@ -14,7 +14,7 @@ install_dependencies () {
     echo "[BASE] Running base installation with user - $(whoami) in location $PWD..."
     apt-get update
     echo "[BASE] Installing dependencies..."
-    apt-get -y install wget curl vim openssl git bash-completion ca-certificates gnupg docker.io
+    apt-get -y install wget curl vim openssl git bash-completion ca-certificates gnupg net-tools
     echo "[BASE] Cloning Kubernetes the Hard Way..."
     mkdir kubernetes && cd "${HOME_DIR}"/kubernetes
     git clone --depth 1 https://github.com/taravinth23/kubernetes-the-hard-way.git
@@ -95,37 +95,51 @@ install_dependencies () {
 
 certificate_installation() {
     echo "[CERTIFICATE] Running certificate installation..."
-    pushd "${HOME_DIR}"/kubernetes &>/dev/null
-    mkdir CERT
-    echo "[CERTIFICATE] Copy ca.conf to ${HOME_DIR}/kubernetes/CERT..."
-    cp "${HOME_DIR}"/kubernetes/kubernetes-the-hard-way/ca.conf "${HOME_DIR}"/kubernetes/CERT
-    popd &>/dev/null
-    pushd "${HOME_DIR}"/kubernetes/CERT &>/dev/null
-    echo "************** [CERTIFICATE] Creating the Root CA certificate **************"
-    echo "[CERTIFICATE] A file called ca.key is created, containing the private key used by the Root CA."
-    openssl genrsa -out ca.key 4096
-    # ✔ This command generates a new RSA private key.
-    # ✔ This creates a private key file named ca.key.
-    # ✔ It's used by the Root Certificate Authority (CA) to sign other certificates.
-    # ✔ The key size is 4096 bits — meaning it's very secure.
-    # genrsa: This tells OpenSSL to create an RSA private key.
-    # -out ca.key: The output file where the private key will be saved.
-    # 4096: The size of the key in bits (4096 bits – very secure).
-    echo "[CERTIFICATE] let's generates a self-signed X.509 certificate for the Root CA which is valid for 10 years (3653 days)..."
-    echo "[CERTIFICATE] The certificate is saved in a file named ca.crt."
-    echo "[CERTIFICATE] The certificate is created using the private key in ca.key and the configuration in (like name, location, etc.) ca.conf."
-    openssl req -x509 -new -sha512 -noenc -key ca.key -days 3653 -config ca.conf -out ca.crt
-    # req: This is the OpenSSL tool for creating and processing certificate requests and certificates.
-    # -x509: Creates a self-signed certificate instead of a certificate request.
-    # -new: Indicates that a new certificate is being generated.
-    # -sha512: Uses the SHA-512 hash function for the certificate's signature (very secure).
-    # -noenc: Specifies that the private key is not encrypted (optional in some setups).
-    # -key ca.key: The private key (ca.key) used to sign the certificate.
-    # -days 3653: The certificate will be valid for 3653 days (~10 years).
-    # -config ca.conf: Uses the ca.conf configuration file for certificate details like distinguished name, extensions, etc.
-    # -out ca.crt: Writes the final certificate to ca.crt.
-    ls *.crt *.key *.conf
+    if [[ "server" == "${CURRENT_HOSTNAME}" ]]; then
+
+        echo "[CERTIFICATE] Setting up Root CA certificate authority (CA)..."
+        pushd "${HOME_DIR}"/kubernetes &>/dev/null
+        mkdir CERT
+        echo "[CERTIFICATE] Copy ca.conf to ${HOME_DIR}/kubernetes/CERT..."
+        cp "${HOME_DIR}"/kubernetes/kubernetes-the-hard-way/ca.conf "${HOME_DIR}"/kubernetes/CERT
+        popd &>/dev/null
+
+        pushd "${HOME_DIR}"/kubernetes/CERT &>/dev/null
+        echo "************** [CERTIFICATE] Creating the Root CA certificate **************"
+        echo "[CERTIFICATE] A file called ca.key is created, containing the private key used by the Root CA."
+        openssl genrsa -out ca.key 4096
+        # ✔ This command generates a new RSA private key.
+        # ✔ This creates a private key file named ca.key.
+        # ✔ It's used by the Root Certificate Authority (CA) to sign other certificates.
+        # ✔ The key size is 4096 bits — meaning it's very secure.
+        # genrsa: This tells OpenSSL to create an RSA private key.
+        # -out ca.key: The output file where the private key will be saved.
+        # 4096: The size of the key in bits (4096 bits – very secure).
+        echo "[CERTIFICATE] let's generates a self-signed X.509 certificate for the Root CA which is valid for 10 years (3653 days)..."
+        echo "[CERTIFICATE] The certificate is saved in a file named ca.crt."
+        echo "[CERTIFICATE] The certificate is created using the private key in ca.key and the configuration in (like name, location, etc.) ca.conf."
+        openssl req -x509 -new -sha512 -noenc -key ca.key -days 3653 -config ca.conf -out ca.crt
+        # req: This is the OpenSSL tool for creating and processing certificate requests and certificates.
+        # -x509: Creates a self-signed certificate instead of a certificate request.
+        # -new: Indicates that a new certificate is being generated.
+        # -sha512: Uses the SHA-512 hash function for the certificate's signature (very secure).
+        # -noenc: Specifies that the private key is not encrypted (optional in some setups).
+        # -key ca.key: The private key (ca.key) used to sign the certificate.
+        # -days 3653: The certificate will be valid for 3653 days (~10 years).
+        # -config ca.conf: Uses the ca.conf configuration file for certificate details like distinguished name, extensions, etc.
+        # -out ca.crt: Writes the final certificate to ca.crt.
+        ls *.crt *.key *.conf
+        for host in node-0 node-1; do
+            echo "[CERTIFICATE] Creating directory on ${host}..."
+            ssh root@${host} mkdir -p "${HOME_DIR}"/kubernetes/CERT
+            echo "[CERTIFICATE] Copying ca.conf, ca.key and ca.crt to ${host}..."
+            scp ca.conf ca.key ca.crt root@${host}:"${HOME_DIR}"/kubernetes/CERT
+        done
+        popd &>/dev/null
+    fi
+
     echo "[CERTIFICATE] Creating certificates for Kubernetes components..."
+    pushd "${HOME_DIR}"/kubernetes/CERT &>/dev/null
     certs=(
         "admin" "node-0" "node-1"
         "kube-proxy" "kube-scheduler"
@@ -159,6 +173,7 @@ certificate_installation() {
             echo "[CERTIFICATE] Copying to ${host}..."
             ssh root@${host} rm -rf /var/lib/kubelet
             ssh root@${host} mkdir /var/lib/kubelet
+            ssh root@${host} chmod 700 /var/lib/kubelet
 
             echo "[CERTIFICATE] Copying ca.crt, ${host}.crt, and ${host}.key to ${host}..."
             scp ca.crt root@${host}:/var/lib/kubelet/
@@ -169,9 +184,10 @@ certificate_installation() {
         done
     else
         if echo "$CURRENT_HOSTNAME" | grep -q "node"; then
-        echo "**************** NODES ----> SERVER ****************"
-        echo "[CERTIFICATE] Running on a worker node Copying ca.key, ca.crt, kube-api-server.key, kube-api-server.crt, service-accounts.key, and service-accounts.crt to server..."
-        scp ca.key ca.crt kube-api-server.key kube-api-server.crt service-accounts.key service-accounts.crt root@server:~/
+            echo "**************** NODES ----> SERVER ****************"
+            echo "[CERTIFICATE] Running on a worker node Copying ca.key, ca.crt, kube-api-server.key, kube-api-server.crt, service-accounts.key, and service-accounts.crt to server..."
+            ssh root@server mkdir -p mkdir "${HOME_DIR}/worker_certificate_$CURRENT_HOSTNAME"
+            scp ca.key ca.crt kube-api-server.key kube-api-server.crt service-accounts.key service-accounts.crt root@server:"${HOME_DIR}/worker_certificate_$CURRENT_HOSTNAME"
         else
             echo "[CERTIFICATE] Current Host Not a recognized hostname for certificate distribution. Skipping this step."
         fi
@@ -317,12 +333,12 @@ kubeconfig_configuration() {
         for host in node-0 node-1; do
             echo "[KUBECONFIG] Copying server to ${host}..."
             ssh "root@${host}" "mkdir -p /var/lib/{kube-proxy,kubelet}"
-            scp kube-proxy.kubeconfig "root@${host}:/var/lib/kubelet/kubeconfig"
+            scp kube-proxy.kubeconfig "root@${host}:/var/lib/kube-proxy/kubeconfig"
             scp "${host}.kubeconfig" "root@${host}:/var/lib/kubelet/kubeconfig"
         done
     else
         if echo "$CURRENT_HOSTNAME" | grep -q "node"; then
-            scp admin.kubeconfig kube-controller-manager.kubeconfig kube-scheduler.kubeconfig root@server:~/
+            scp admin.kubeconfig kube-controller-manager.kubeconfig kube-scheduler.kubeconfig root@server:"${HOME_DIR}/worker_certificate_$CURRENT_HOSTNAME"
             data_encryption
         fi
     fi
@@ -338,16 +354,29 @@ data_encryption() {
     echo "[DATA-ENCRYPTION] Generate an encryption key..."
     export ENCRYPTION_KEY=$(head -c 32 /dev/urandom | base64)
     envsubst < kubernetes/kubernetes-the-hard-way/configs/encryption-config.yaml > encryption-config.yaml
-    scp encryption-config.yaml root@server:"${HOME_DIR}"
+    scp encryption-config.yaml root@server:"${HOME_DIR}/worker_certificate_$CURRENT_HOSTNAME"
     popd &>/dev/null
     echo "[DATA-ENCRYPTION] Data encryption setup completed."
 }
 
-bootstrapping_server () {
+bootstrapping_control_plane () {
     echo "[ETCD] Bootstrapping etcd cluster..."
     pushd "${HOME_DIR}"/kubernetes &>/dev/null
     if [[ "server" == "${CURRENT_HOSTNAME}" ]]; then
-        cp encryption-config.yaml "${HOME_DIR}"/kubernetes/kubernetes-the-hard-way/configs/
+
+        if [ -f "${MACHINE_INVENTORY}" ]; then
+            while read IP FQDN HOSTNAME SUBNET HOST; do
+                echo "RUNNING FOR ${IP} ===> ${HOST} && SUBNET is ${SUBNET}"
+                if echo "$HOST" | grep -q "node"; then
+                    cp "${HOME_DIR}/kubernetes/kubernetes-the-hard-way/configs/10-bridge.conf" "${HOME_DIR}/worker_certificate_${HOST}/10-bridge.conf"
+                    sed "s|SUBNET|$SUBNET|g" "${HOME_DIR}/worker_certificate_${HOST}/10-bridge.conf" > "${HOME_DIR}/worker_certificate_${HOST}/10-bridge.conf"
+                    scp "${HOME_DIR}/worker_certificate_${HOST}/10-bridge.conf" root@${HOST}:/etc/cni/net.d/10-bridge.conf
+                    scp "${HOME_DIR}"/kubernetes/kubernetes-the-hard-way/configs/99-loopback.conf root@${HOST}:/etc/cni/net.d/99-loopback.conf
+                fi
+            done < "${MACHINE_INVENTORY}"
+        fi
+
+        echo "[ETCD] Copying etcd and Kubernetes controller binaries to /usr/local/bin..."
         cp "${HOME_DIR}"/kubernetes/kubernetes-the-hard-way/downloads/controller/etcd /usr/local/bin/
         cp "${HOME_DIR}"/kubernetes/kubernetes-the-hard-way/downloads/client/etcdctl /usr/local/bin/
         cp "${HOME_DIR}"/kubernetes/kubernetes-the-hard-way/downloads/controller/kube-apiserver /usr/local/bin/
@@ -361,8 +390,24 @@ bootstrapping_server () {
         pushd "${HOME_DIR}"/kubernetes/CERT &>/dev/null
         echo "[ETCD] Copying etcd certificates to /etc/etcd..."
         cp ca.crt kube-api-server.key kube-api-server.crt /etc/etcd/
-        cp ca.crt ca.key kube-api-server.key kube-api-server.crt service-accounts.key service-accounts.crt kube-controller-manager.kubeconfig \
-            kube-scheduler.kubeconfig "${HOME_DIR}"/kubernetes/kubernetes-the-hard-way/configs/encryption-config.yaml /var/lib/kubernetes/
+
+        certificates=(
+            "ca.crt" "ca.key" "kube-api-server.key" "kube-api-server.crt" "service-accounts.key" 
+            "service-accounts.crt" "kube-controller-manager.kubeconfig"
+            "kube-scheduler.kubeconfig" "encryption-config.yaml"
+        )
+
+        for host in node-0 node-1; do
+            pushd "${HOME_DIR}/worker_certificate_${CURRENT_HOSTNAME}"
+            for cert in ${certificates[*]}; do
+                cp "${cert}" /var/lib/kubernetes/"${host}_${cert}"
+            done
+            popd &>/dev/null
+        done
+
+        chmod 644 /var/lib/kubernetes/*.crt
+        chmod 600 /var/lib/kubernetes/*.key
+
         popd &>/dev/null
 
         echo "[ETCD] Bringing-up etcd or starting up etcd..."
@@ -375,7 +420,18 @@ bootstrapping_server () {
         systemctl enable etcd kube-apiserver kube-controller-manager kube-scheduler
         systemctl start etcd kube-apiserver kube-controller-manager kube-scheduler
 
-        systemctl is-active kube-apiserver
+        # Wait until kube-apiserver is active
+        echo "[WAIT] Waiting for kube-apiserver to become active..."
+        while true; do
+            status=$(systemctl is-active kube-apiserver)
+            if [[ "$status" == "active" ]]; then
+                echo "[WAIT] kube-apiserver is active."
+                break
+            else
+                echo "[WAIT] kube-apiserver status: $status. Retrying in 2 seconds..."
+                sleep 2
+            fi
+        done
 
         systemctl status kube-apiserver --no-pager
 
@@ -388,6 +444,10 @@ bootstrapping_server () {
 
         curl --cacert "${HOME_DIR}"/kubernetes/CERT/ca.crt "${K8S_API_SERVER}:${K8S_API_SERVER_PORT}/version"
 
+        mkdir -p "${HOME_DIR}"/.kube
+        cp "${HOME_DIR}"/kubernetes/CERT/admin.kubeconfig "${HOME_DIR}"/.kube/config
+        chown -R ubuntu:ubuntu "${HOME_DIR}"/.kube
+
         echo "[ETCD] List the etcd cluster members..."
         etcdctl member list
     else
@@ -399,12 +459,46 @@ bootstrapping_server () {
     
 }
 
+bootstrapping_worker_node () {
+    if echo "$CURRENT_HOSTNAME" | grep -q "node"; then
+        apt-get update
+        apt-get -y install socat conntrack ipset kmod
+        mkdir -p {/etc/cni/net.d,/opt/cni/bin,/var/run/kubernetes, /etc/containerd}
+        echo "[WORKER] Copying CNI plugins to /opt/cni/bin..."
+        cp "${HOME_DIR}"/kubernetes/kubernetes-the-hard-way/downloads/cni-plugins/* /opt/cni/bin/
+        echo "[WORKER] Copying worker binaries to /usr/local/bin..."
+        pushd "${HOME_DIR}"/kubernetes/kubernetes-the-hard-way/downloads/worker &>/dev/null
+        cp crictl kube-proxy kubelet runc /usr/local/bin/
+        cp containerd containerd-shim-runc-v2 containerd-stress /bin/
+        popd &>/dev/null
+        cp "${HOME_DIR}"/kubernetes/kubernetes-the-hard-way/downloads/cni-plugins/* /opt/cni/bin/
+        modprobe br-netfilter
+        echo "br-netfilter" >> /etc/modules-load.d/modules.conf
+        lsmod | grep br_netfilter
+        echo "net.bridge.bridge-nf-call-iptables = 1" >> /etc/sysctl.d/kubernetes.conf
+        echo "net.bridge.bridge-nf-call-ip6tables = 1" >> /etc/sysctl.d/kubernetes.conf
+        sysctl -p /etc/sysctl.d/kubernetes.conf
+        mkdir -p /etc/containerd/
+        cp "${HOME_DIR}"/kubernetes/kubernetes-the-hard-way/configs/containerd-config.toml /etc/containerd/config.toml
+        cp "${HOME_DIR}"/kubernetes/kubernetes-the-hard-way/units/containerd.service /etc/systemd/system/
+        cp "${HOME_DIR}"/kubernetes/kubernetes-the-hard-way/configs/kubelet-config.yaml /var/lib/kubelet/
+        cp "${HOME_DIR}"/kubernetes/kubernetes-the-hard-way/units/kubelet.service /etc/systemd/system/
+        cp "${HOME_DIR}"/kubernetes/kubernetes-the-hard-way/configs/kube-proxy-config.yaml /var/lib/kube-proxy/
+        cp "${HOME_DIR}"/kubernetes/kubernetes-the-hard-way/units/kube-proxy.service /etc/systemd/system/
+        systemctl daemon-reload
+        systemctl enable containerd kubelet kube-proxy
+        systemctl start containerd kubelet kube-proxy
+        systemctl is-active containerd kubelet kube-proxy
+    fi
+}
+
 usage() {
     echo "Usage: $0 [OPTIONS]"
     echo "  -h, --help    Display this help message"
-    echo "*#*#*#*#*#*#*#*#*#*#* ${0} setup_base -> to install all dependencies *#*#*#*#*#*#*#*#*"
-    echo "*#*#*#*#*#*#*#*#*#*#* ${0} setup_certificate -> to bring up certificate for all components *#*#*#*#*#*#*#*#*"
-    echo "*#*#*#*#*#*#*#*#*#*#* ${0} setup_kubeconfig -> to configure kubeconfig for all components & data encryption encryption-config.yaml *#*#*#*#*#*#*#*#*"
+    echo "*#*#*#*#*#*#*#*#*#*#* ${0} setup_base -> to install all dependencies *#*#*#*#*#*#*#*#*#*#*"
+    echo "*#*#*#*#*#*#*#*#*#*#* ${0} setup_certificate -> to bring up certificate for all components *#*#*#*#*#*#*#*#*#*#*"
+    echo "*#*#*#*#*#*#*#*#*#*#* ${0} setup_kubeconfig -> to configure kubeconfig for all components & data encryption encryption-config.yaml *#*#*#*#*#*#*#*#*#*#*"
+    echo "*#*#*#*#*#*#*#*#*#*#* ${0} setup_server -> to bring up the Kubernetes API server *#*#*#*#*#*#*#*#*#*#*"
     # ... other options
 }
 
@@ -423,8 +517,11 @@ case "$INSTALL_TYPE" in
     setup_kubeconfig)
         kubeconfig_configuration
         ;;
-    setup_server)
-        bootstrapping_server
+    setup_control_plane)
+        bootstrapping_control_plane
+        ;;
+    setup_worker_node)
+        bootstrapping_worker_node
         ;;
     *)
         usage
