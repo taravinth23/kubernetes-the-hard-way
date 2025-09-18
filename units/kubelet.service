@@ -9,6 +9,13 @@ ExecStart=/usr/local/bin/kubelet \
   --config=/var/lib/kubelet/kubelet-config.yaml \
   --kubeconfig=/var/lib/kubelet/kubeconfig \
   --v=2
+  --container-runtime=remote \
+  --container-runtime-endpoint=unix:///var/run/containerd/containerd.sock \
+  --root-dir=/var/lib/kubelet \
+  --network-plugin=cni \
+  --cni-bin-dir=/opt/cni/bin \
+  --cni-conf-dir=/etc/cni/net.d \
+  --fail-swap-on=false
 Restart=on-failure
 RestartSec=5
 
