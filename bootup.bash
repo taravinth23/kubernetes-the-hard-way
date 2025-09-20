@@ -370,7 +370,7 @@ bootstrapping_control_plane () {
                 if echo "$HOST" | grep -q "node"; then
                     cp "${HOME_DIR}/kubernetes/kubernetes-the-hard-way/configs/10-bridge.conf" "${HOME_DIR}/worker_certificate_${HOST}/10-bridge.conf"
                     sed "s|SUBNET|$SUBNET|g" "${HOME_DIR}/worker_certificate_${HOST}/10-bridge.conf" > "${HOME_DIR}/worker_certificate_${HOST}/10-bridge.conf"
-                    ssh "root@${host}" "mkdir -p /etc/cni/net.d"
+                    ssh "root@${HOST}" "mkdir -p /etc/cni/net.d"
                     scp "${HOME_DIR}/worker_certificate_${HOST}/10-bridge.conf" root@${HOST}:/etc/cni/net.d/10-bridge.conf
                     scp "${HOME_DIR}"/kubernetes/kubernetes-the-hard-way/configs/99-loopback.conf root@${HOST}:/etc/cni/net.d/99-loopback.conf
                 fi
