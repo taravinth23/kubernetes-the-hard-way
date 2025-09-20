@@ -437,16 +437,16 @@ bootstrapping_control_plane () {
 
         journalctl -u kube-apiserver | cat
 
+        mkdir -p "${HOME_DIR}"/.kube
+        cp "${HOME_DIR}"/kubernetes/CERT/admin.kubeconfig "${HOME_DIR}"/.kube/config
+        chown -R ubuntu:ubuntu "${HOME_DIR}"/.kube
+
         kubectl cluster-info --kubeconfig "${HOME_DIR}"/kubernetes/CERT/admin.kubeconfig
 
         kubectl apply -f "${HOME_DIR}"/kubernetes/kubernetes-the-hard-way/configs/kube-apiserver-to-kubelet.yaml \
             --kubeconfig "${HOME_DIR}"/kubernetes/CERT/admin.kubeconfig
 
         curl --cacert "${HOME_DIR}"/kubernetes/CERT/ca.crt "${K8S_API_SERVER}:${K8S_API_SERVER_PORT}/version"
-
-        mkdir -p "${HOME_DIR}"/.kube
-        cp "${HOME_DIR}"/kubernetes/CERT/admin.kubeconfig "${HOME_DIR}"/.kube/config
-        chown -R ubuntu:ubuntu "${HOME_DIR}"/.kube
 
         echo "[ETCD] List the etcd cluster members..."
         etcdctl member list
