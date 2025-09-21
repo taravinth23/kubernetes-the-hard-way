@@ -4,3 +4,9 @@ clientConnection:
   kubeconfig: "/var/lib/kubernetes/kube-scheduler.kubeconfig"
 leaderElection:
   leaderElect: true
+  resourceLock: "leases"
+  namespace: "kube-system"
+  name: "kube-scheduler"
+  leaseDuration: 15s
+  renewDeadline: 10s
+  retryPeriod: 2s

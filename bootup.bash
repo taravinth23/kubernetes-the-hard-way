@@ -398,7 +398,9 @@ bootstrapping_control_plane () {
         cp "${HOME_DIR}"/kubernetes/kubernetes-the-hard-way/downloads/client/etcdctl /usr/local/bin/
         cp "${HOME_DIR}"/kubernetes/kubernetes-the-hard-way/downloads/controller/kube-apiserver /usr/local/bin/
         cp "${HOME_DIR}"/kubernetes/kubernetes-the-hard-way/downloads/controller/kube-controller-manager /usr/local/bin/
+        cp "${HOME_DIR}"/kubernetes/kubernetes-the-hard-way/downloads/controller/kube-scheduler /usr/local/bin/
         ls -l /usr/local/bin/etcd*
+        ls -l /usr/local/bin/kube*
         sleep 2
         echo "[ETCD] Creating necessary directories for etcd..."
         mkdir -p /etc/etcd /var/lib/etcd /etc/kubernetes/config /var/lib/kubernetes/
@@ -413,13 +415,13 @@ bootstrapping_control_plane () {
 
         certificates=(
             "ca.crt" "ca.key" "kube-api-server.key" "kube-api-server.crt" "service-accounts.key" 
-            "service-accounts.crt" "kube-controller-manager.kubeconfig"
-            "kube-scheduler.kubeconfig" "encryption-config.yaml"
+            "service-accounts.crt" "kube-controller-manager.kubeconfig" "kube-scheduler.crt" "kube-scheduler.key"
+            "kube-scheduler.kubeconfig" "encryption-config.yaml" "kube-proxy.crt" "kube-proxy.key"
         )
 
         echo "[CONTROL_PLANE] Trying to bring-up api server by copying necessary configurations to /var/lib/kubernetes..."
         for cert in ${certificates[*]}; do
-            cp "${cert}" /var/lib/kubernetes/"${host}_${cert}"
+            cp "${cert}" /var/lib/kubernetes/
         done
 
         chmod 644 /var/lib/kubernetes/*.crt
@@ -487,6 +489,8 @@ bootstrapping_control_plane () {
 
         echo "[ETCD] List the etcd cluster members..."
         etcdctl member list
+
+        kubectl get componentstatuses --kubeconfig "${HOME_DIR}"/kubernetes/CERT/admin.kubeconfig
     else
         if echo "$CURRENT_HOSTNAME" | grep -q "node"; then
             echo "[ETCD] Running on nodes host, skipping etcd setup on server nodes..."
