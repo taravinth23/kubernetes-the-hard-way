@@ -204,6 +204,10 @@ kubeconfig_configuration() {
     echo "[KUBECONFIG] Kubeconfig files are created for each node (node-0 and node-1) to allow them \
     to authenticate with the Kubernetes API server using their respective certificates and keys."
 
+    config=(
+        "kube-proxy" "kube-controller-manager" "kube-scheduler" "admin"
+    )
+
     if [[ "server" == "${CURRENT_HOSTNAME}" ]]; then
         for host in node-0 node-1; do
 
@@ -264,10 +268,6 @@ kubeconfig_configuration() {
         echo "[KUBECONFIG] Listing the created kubeconfig files ..."
         ls -l *.kubeconfig
     fi
-
-    config=(
-        "kube-proxy" "kube-controller-manager" "kube-scheduler" "admin"
-    )
 
     echo "[KUBECONFIG] Generating kubeconfig files : ${config[*]}"
 
@@ -335,6 +335,12 @@ kubeconfig_configuration() {
             ssh "root@${host}" "mkdir -p /var/lib/{kube-proxy,kubelet}"
             scp kube-proxy.kubeconfig "root@${host}:/var/lib/kube-proxy/kubeconfig"
             scp "${host}.kubeconfig" "root@${host}:/var/lib/kubelet/kubeconfig"
+
+            for service in ${config[*]}; do
+                echo "[KUBECONFIG] Copying ${service}.kubeconfig to ${host}..."
+                scp "${service}.kubeconfig" root@${host}:"${HOME_DIR}/kubernetes/CERT/${service}.kubeconfig"
+                scp "${host}.kubeconfig" root@${host}:"${HOME_DIR}/kubernetes/CERT"
+            done
         done
     else
         if echo "$CURRENT_HOSTNAME" | grep -q "node"; then
@@ -360,7 +366,8 @@ data_encryption() {
 }
 
 bootstrapping_control_plane () {
-    echo "[ETCD] Bootstrapping etcd cluster..."
+    echo "[CONTROL_PLANE] Bootstrapping Control Plane..."
+    echo "[ETCD] Let's Bring-up etcd cluster..."
     pushd "${HOME_DIR}"/kubernetes &>/dev/null
     if [[ "server" == "${CURRENT_HOSTNAME}" ]]; then
 
@@ -399,7 +406,7 @@ bootstrapping_control_plane () {
         )
 
         for host in node-0 node-1; do
-            pushd "${HOME_DIR}/worker_certificate_${CURRENT_HOSTNAME}"
+            pushd "${HOME_DIR}/worker_certificate_${host}"
             for cert in ${certificates[*]}; do
                 cp "${cert}" /var/lib/kubernetes/"${host}_${cert}"
             done
@@ -425,8 +432,9 @@ bootstrapping_control_plane () {
         echo "[WAIT] Waiting for kube-apiserver to become active..."
         while true; do
             status=$(systemctl is-active kube-apiserver)
+            echo "[WAIT] Current kube-apiserver status: $status"
             if [[ "$status" == "active" ]]; then
-                echo "[WAIT] kube-apiserver is active."
+                echo "[CONTROL_PLANE] kube-apiserver is active."
                 break
             else
                 echo "[WAIT] kube-apiserver status: $status. Retrying in 2 seconds..."
