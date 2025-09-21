@@ -500,7 +500,7 @@ bootstrapping_worker_node () {
     if echo "$CURRENT_HOSTNAME" | grep -q "node"; then
         apt-get update
         apt-get -y install socat conntrack ipset kmod
-        mkdir -p {/etc/cni/net.d,/opt/cni/bin,/var/run/kubernetes, /etc/containerd}
+        mkdir -p {/etc/cni/net.d,/opt/cni/bin,/var/run/kubernetes,/etc/containerd}
         echo "[WORKER] Copying CNI plugins to /opt/cni/bin..."
         cp "${HOME_DIR}"/kubernetes/kubernetes-the-hard-way/downloads/cni-plugins/* /opt/cni/bin/
         echo "[WORKER] Copying worker binaries to /usr/local/bin..."
