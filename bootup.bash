@@ -513,34 +513,87 @@ bootstrapping_control_plane () {
 
 bootstrapping_worker_node () {
     if echo "$CURRENT_HOSTNAME" | grep -q "node"; then
+        echo "[WORKER] Bootstrapping Worker Node..."
+        echo "[WORKER] Installing dependencies: socat, conntrack, ipset, kmod..."
         apt-get update
         apt-get -y install socat conntrack ipset kmod
+        echo "[WORKER] Creating necessary directories for CNI plugins and Kubernetes..."
         mkdir -p {/etc/cni/net.d,/opt/cni/bin,/var/run/kubernetes,/etc/containerd}
         echo "[WORKER] Copying CNI plugins to /opt/cni/bin..."
         cp "${HOME_DIR}"/kubernetes/kubernetes-the-hard-way/downloads/cni-plugins/* /opt/cni/bin/
         echo "[WORKER] Copying worker binaries to /usr/local/bin..."
         pushd "${HOME_DIR}"/kubernetes/kubernetes-the-hard-way/downloads/worker &>/dev/null
+        echo "[WORKER] Copying crictl, kube-proxy, kubelet, and runc to /usr/local/bin..."
         cp crictl kube-proxy kubelet runc /usr/local/bin/
         cp containerd containerd-shim-runc-v2 containerd-stress /bin/
         popd &>/dev/null
+        echo "[WORKER] Setting up containerd..."
         cp "${HOME_DIR}"/kubernetes/kubernetes-the-hard-way/downloads/cni-plugins/* /opt/cni/bin/
+        echo "[WORKER] Loading br-netfilter module..."
         modprobe br-netfilter
+        echo "[WORKER] Ensuring br-netfilter module is loaded on boot..."
         echo "br-netfilter" >> /etc/modules-load.d/modules.conf
+        echo "[WORKER] Setting sysctl parameters for Kubernetes networking..."
         lsmod | grep br_netfilter
         echo "net.bridge.bridge-nf-call-iptables = 1" >> /etc/sysctl.d/kubernetes.conf
         echo "net.bridge.bridge-nf-call-ip6tables = 1" >> /etc/sysctl.d/kubernetes.conf
+        echo "[WORKER] Applying sysctl parameters..."
         sysctl -p /etc/sysctl.d/kubernetes.conf
         mkdir -p /etc/containerd/
+        echo "[WORKER] Configuring and starting containerd, kubelet, and kube-proxy services..."
         cp "${HOME_DIR}"/kubernetes/kubernetes-the-hard-way/configs/containerd-config.toml /etc/containerd/config.toml
         cp "${HOME_DIR}"/kubernetes/kubernetes-the-hard-way/units/containerd.service /etc/systemd/system/
         cp "${HOME_DIR}"/kubernetes/kubernetes-the-hard-way/configs/kubelet-config.yaml /var/lib/kubelet/
         cp "${HOME_DIR}"/kubernetes/kubernetes-the-hard-way/units/kubelet.service /etc/systemd/system/
         cp "${HOME_DIR}"/kubernetes/kubernetes-the-hard-way/configs/kube-proxy-config.yaml /var/lib/kube-proxy/
         cp "${HOME_DIR}"/kubernetes/kubernetes-the-hard-way/units/kube-proxy.service /etc/systemd/system/
+        echo "[WORKER] Starting containerd, kubelet, and kube-proxy services..."
         systemctl daemon-reload
         systemctl enable containerd kubelet kube-proxy
         systemctl start containerd kubelet kube-proxy
         systemctl is-active containerd kubelet kube-proxy
+        echo "[WORKER] Checking the status of containerd, kubelet, and kube-proxy services..."
+        systemctl status containerd --no-pager
+        systemctl status kubelet --no-pager
+        systemctl status kube-proxy --no-pager
+        sleep 3
+        journalctl -u containerd | head -100
+        journalctl -u containerd | tail -10
+        sleep 3
+        journalctl -u kubelet | head -100
+        journalctl -u kubelet | tail -10
+        sleep 3
+        journalctl -u kube-proxy | head -100
+        journalctl -u kube-proxy | tail -10
+        sleep 3
+        echo "[WORKER] Worker node setup completed."
+    fi
+}
+
+setup_network_routes() {
+    SERVER_IP=$(grep server machines.txt | cut -d " " -f 1)
+
+    if [[ "server" == "${CURRENT_HOSTNAME}" ]]; then
+        echo "[NETWORK] Setting up network routes on server for worker nodes..."
+        for host in node-0 node-1; do
+            echo "[NETWORK] Adding route to ${host} subnet via ${host} IP..."
+            echo "ip route add $(grep "$host" "${MACHINE_INVENTORY}" | cut -d " " -f 4) via $(grep "$host" "${MACHINE_INVENTORY}" | cut -d " " -f 1)"
+            ip route add $(grep "${host}" "${MACHINE_INVENTORY}" | cut -d " " -f 4) via $(grep "${host}" "${MACHINE_INVENTORY}" | cut -d " " -f 1)
+        done
+        echo "[NETWORK] Setting up network routes on worker nodes for other worker nodes..."
+        for src in node-0 node-1; do
+            for dst in node-0 node-1; do
+                if [ "${src}" != "${dst}" ]; then
+                    echo "[NETWORK] On ${src}, adding route to ${dst} subnet via ${SERVER_IP}..."
+                    echo "ssh root@${src} \"ip route add $(grep ${dst} ${MACHINE_INVENTORY} | cut -d ' ' -f 1) via $(grep ${dst} ${MACHINE_INVENTORY} | cut -d ' ' -f 4)\""
+                    ssh root@"${src}" "ip route add $(grep ${dst} ${MACHINE_INVENTORY} | cut -d ' ' -f 1) via $(grep ${dst} ${MACHINE_INVENTORY} | cut -d ' ' -f 4)"
+                fi
+            done
+            echo "[NETWORK] Displaying routing table on node : ${src}..."
+            ssh "root@${src}" ip route
+        done
+        echo "[NETWORK] Displaying routing table on server - control plane..."
+        ip route
     fi
 }
 
