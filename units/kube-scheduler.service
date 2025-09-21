@@ -6,7 +6,6 @@ Documentation=https://github.com/kubernetes/kubernetes
 ExecStart=/usr/local/bin/kube-scheduler \
   --config=/etc/kubernetes/config/kube-scheduler.yaml \
   --authentication-kubeconfig=/var/lib/kubernetes/kube-scheduler.kubeconfig \
-  --authorization-kubeconfig=/var/lib/kubernetes/kube-scheduler.kubeconfig \
   --bind-address=127.0.0.1 \
   --secure-port=10259 \
   --v=2
