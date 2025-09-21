@@ -3,7 +3,7 @@
 HOME_DIR="/home/ubuntu"
 MACHINE_INVENTORY="${HOME_DIR}/machine.txt"
 CLUSTER_NAME="kubernetes-the-hard-way"
-K8S_API_SERVER="https://127.0.0.1"
+K8S_API_SERVER="https://server.kubernetes.local"
 K8S_API_SERVER_PORT=6443
 CURRENT_HOSTNAME=$(hostname)
 
@@ -64,7 +64,12 @@ install_dependencies () {
             if [[ "${HOSTNAME}" == "${CURRENT_HOSTNAME}" ]]; then
                 # If IP matches, replace line with updated hostname and FQDN
                 echo "[BASE] Updating /etc/hosts for current host ${HOST}..."
-                sed -i "s/^127\.0\.0\.1\s\+localhost.*/127.0.0.1 ${HOST} ${FQDN} localhost/" /etc/hosts
+                if [[ "server" == "${HOST}" ]]; then
+                    echo "# Control planes Setting for api-server information"
+                    sed -i "s/^127\.0\.0\.1\s\+localhost.*/127.0.0.1 ${HOST} ${FQDN} localhost ${K8S_API_SERVER} api.k8s.local kubernetes/" /etc/hosts
+                else
+                    sed -i "s/^127\.0\.0\.1\s\+localhost.*/127.0.0.1 ${HOST} ${FQDN} localhost/" /etc/hosts
+                fi
                 echo "[BASE] Setting hostname..."
                 hostnamectl set-hostname ${HOST}
                 echo "[BASE] Reloading systemd manager configuration..."
@@ -74,7 +79,12 @@ install_dependencies () {
             else
                 # If IP does not match, append IP, FQDN, HOST at the end of /etc/hosts if not already present
                 if ! grep -q "$IP" /etc/hosts; then
-                    echo "${IP} ${FQDN} ${HOST}" >> /etc/hosts
+                    if [[ "server" == "${HOST}" ]]; then
+                        echo "# Control planes Setting for api-server information"
+                        echo "${IP} ${FQDN} ${HOST} ${K8S_API_SERVER} api.k8s.local kubernetes" >> /etc/hosts
+                    else
+                        echo "${IP} ${FQDN} ${HOST}" >> /etc/hosts
+                    fi
                 fi
                 echo "[Base][Manual-Setup] Copy the current machine ssh-key to root@${HOST}:/root/.ssh/authorized_keys"
                 echo "[Base][Manual-Setup] scp ${HOME_DIR}/sshkey.pub root@${HOST}:/root/.ssh/$(hostname).pub"
@@ -89,8 +99,6 @@ install_dependencies () {
     fi
     popd &>/dev/null
     echo "[BASE] Base installation completed."
-    
-
 }
 
 certificate_installation() {
@@ -479,6 +487,7 @@ bootstrapping_control_plane () {
         mkdir -p "${HOME_DIR}"/.kube
         cp "${HOME_DIR}"/kubernetes/CERT/admin.kubeconfig "${HOME_DIR}"/.kube/config
         chown -R ubuntu:ubuntu "${HOME_DIR}"
+        export KUBECONFIG="${HOME_DIR}/kubernetes/CERT/admin.kubeconfig"
 
         kubectl cluster-info --kubeconfig "${HOME_DIR}"/kubernetes/CERT/admin.kubeconfig
 
@@ -491,6 +500,8 @@ bootstrapping_control_plane () {
         etcdctl member list
 
         kubectl get componentstatuses --kubeconfig "${HOME_DIR}"/kubernetes/CERT/admin.kubeconfig
+
+        kubectl config view --flatten --kubeconfig "${HOME_DIR}"/kubernetes/CERT/admin.kubeconfig
     else
         if echo "$CURRENT_HOSTNAME" | grep -q "node"; then
             echo "[ETCD] Running on nodes host, skipping etcd setup on server nodes..."
