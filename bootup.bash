@@ -330,6 +330,7 @@ kubeconfig_configuration() {
 
     echo "[KUBECONFIG] let's distribute the kubernetes configuration files..."
     if [[ "server" == "${CURRENT_HOSTNAME}" ]]; then
+        data_encryption
         for host in node-0 node-1; do
             echo "[KUBECONFIG] Copying server to ${host}..."
             ssh "root@${host}" "mkdir -p /var/lib/{kube-proxy,kubelet}"
@@ -340,12 +341,12 @@ kubeconfig_configuration() {
                 echo "[KUBECONFIG] Copying ${service}.kubeconfig to ${host}..."
                 scp "${service}.kubeconfig" root@${host}:"${HOME_DIR}/kubernetes/CERT/${service}.kubeconfig"
                 scp "${host}.kubeconfig" root@${host}:"${HOME_DIR}/kubernetes/CERT"
+                scp "${HOME_DIR}/kubernetes/CERT/encryption-config.yaml" root@${host}:"${HOME_DIR}/kubernetes/CERT/encryption-config.yaml"
             done
         done
     else
         if echo "$CURRENT_HOSTNAME" | grep -q "node"; then
             scp admin.kubeconfig kube-controller-manager.kubeconfig kube-scheduler.kubeconfig root@server:"${HOME_DIR}/worker_certificate_$CURRENT_HOSTNAME"
-            data_encryption
         fi
     fi
     echo "[KUBECONFIG] Kubeconfig setup completed."
@@ -359,8 +360,7 @@ data_encryption() {
     cat "${HOME_DIR}"/kubernetes/kubernetes-the-hard-way/configs/encryption-config.yaml
     echo "[DATA-ENCRYPTION] Generate an encryption key..."
     export ENCRYPTION_KEY=$(head -c 32 /dev/urandom | base64)
-    envsubst < kubernetes/kubernetes-the-hard-way/configs/encryption-config.yaml > encryption-config.yaml
-    scp encryption-config.yaml root@server:"${HOME_DIR}/worker_certificate_$CURRENT_HOSTNAME"
+    envsubst < kubernetes/kubernetes-the-hard-way/configs/encryption-config.yaml > "${HOME_DIR}/kubernetes/CERT/encryption-config.yaml"
     popd &>/dev/null
     echo "[DATA-ENCRYPTION] Data encryption setup completed."
 }
@@ -372,14 +372,23 @@ bootstrapping_control_plane () {
     if [[ "server" == "${CURRENT_HOSTNAME}" ]]; then
 
         if [ -f "${MACHINE_INVENTORY}" ]; then
+            echo "[CONTROL_PLANE] Setting up CNI networking on worker nodes..."
             while read IP FQDN HOSTNAME SUBNET HOST; do
-                echo "RUNNING FOR ${IP} ===> ${HOST} && SUBNET is ${SUBNET}"
+                echo "[CONTROL_PLANE] let's run for the ${IP} or ${HOST} with the ${SUBNET}"
+                sleep 2
                 if echo "$HOST" | grep -q "node"; then
                     cp "${HOME_DIR}/kubernetes/kubernetes-the-hard-way/configs/10-bridge.conf" "${HOME_DIR}/worker_certificate_${HOST}/10-bridge.conf"
+                    ls -l "${HOME_DIR}/worker_certificate_${HOST}/10-bridge.conf"
+                    sleep 3
                     sed "s|SUBNET|$SUBNET|g" "${HOME_DIR}/worker_certificate_${HOST}/10-bridge.conf" > "${HOME_DIR}/worker_certificate_${HOST}/10-bridge.conf"
+                    cat "${HOME_DIR}/worker_certificate_${HOST}/10-bridge.conf"
+                    sleep 2
                     ssh "root@${HOST}" "mkdir -p /etc/cni/net.d"
                     scp "${HOME_DIR}/worker_certificate_${HOST}/10-bridge.conf" root@${HOST}:/etc/cni/net.d/10-bridge.conf
+                    ssh "root@${HOST}" "cat /etc/cni/net.d/10-bridge.conf"
+                    sleep 3
                     scp "${HOME_DIR}"/kubernetes/kubernetes-the-hard-way/configs/99-loopback.conf root@${HOST}:/etc/cni/net.d/99-loopback.conf
+                    ssh "root@${HOST}" "cat /etc/cni/net.d/99-loopback.conf"
                 fi
             done < "${MACHINE_INVENTORY}"
         fi
@@ -390,6 +399,7 @@ bootstrapping_control_plane () {
         cp "${HOME_DIR}"/kubernetes/kubernetes-the-hard-way/downloads/controller/kube-apiserver /usr/local/bin/
         cp "${HOME_DIR}"/kubernetes/kubernetes-the-hard-way/downloads/controller/kube-controller-manager /usr/local/bin/
         ls -l /usr/local/bin/etcd*
+        sleep 2
         echo "[ETCD] Creating necessary directories for etcd..."
         mkdir -p /etc/etcd /var/lib/etcd /etc/kubernetes/config /var/lib/kubernetes/
         chmod 700 /var/lib/etcd
@@ -398,6 +408,8 @@ bootstrapping_control_plane () {
         pushd "${HOME_DIR}"/kubernetes/CERT &>/dev/null
         echo "[ETCD] Copying etcd certificates to /etc/etcd..."
         cp ca.crt kube-api-server.key kube-api-server.crt /etc/etcd/
+        ls -l /etc/etcd/*.crt /etc/etcd/*.key
+        sleep 2
 
         certificates=(
             "ca.crt" "ca.key" "kube-api-server.key" "kube-api-server.crt" "service-accounts.key" 
@@ -405,25 +417,34 @@ bootstrapping_control_plane () {
             "kube-scheduler.kubeconfig" "encryption-config.yaml"
         )
 
-        for host in node-0 node-1; do
-            pushd "${HOME_DIR}/worker_certificate_${host}"
-            for cert in ${certificates[*]}; do
-                cp "${cert}" /var/lib/kubernetes/"${host}_${cert}"
-            done
-            popd &>/dev/null
+        echo "[CONTROL_PLANE] Trying to bring-up api server by copying necessary configurations to /var/lib/kubernetes..."
+        for cert in ${certificates[*]}; do
+            cp "${cert}" /var/lib/kubernetes/"${host}_${cert}"
         done
 
         chmod 644 /var/lib/kubernetes/*.crt
         chmod 600 /var/lib/kubernetes/*.key
 
+        ls -ahl /var/lib/kubernetes/*
+        sleep 2
+
         popd &>/dev/null
 
-        echo "[ETCD] Bringing-up etcd or starting up etcd..."
+        echo "[CONTROL_PLANE] Bringing-up etcd or starting up etcd..."
         cp "${HOME_DIR}"/kubernetes/kubernetes-the-hard-way/units/etcd.service /etc/systemd/system/
         cp "${HOME_DIR}"/kubernetes/kubernetes-the-hard-way/units/kube-apiserver.service /etc/systemd/system/kube-apiserver.service
         cp "${HOME_DIR}"/kubernetes/kubernetes-the-hard-way/units/kube-controller-manager.service /etc/systemd/system/
         cp "${HOME_DIR}"/kubernetes/kubernetes-the-hard-way/units/kube-scheduler.service /etc/systemd/system/
         cp "${HOME_DIR}"/kubernetes/kubernetes-the-hard-way/configs/kube-scheduler.yaml /etc/kubernetes/config/
+
+        ls -ahl /etc/systemd/system/etcd.service
+        ls -ahl /etc/systemd/system/kube-apiserver.service
+        ls -ahl /etc/systemd/system/kube-controller-manager.service
+        ls -ahl /etc/systemd/system/kube-scheduler.service
+        ls -ahl /etc/kubernetes/config/kube-scheduler.yaml
+        sleep 2
+
+        echo "[CONTROL_PLANE] Starting etcd and Kubernetes controller services..."
         systemctl daemon-reload
         systemctl enable etcd kube-apiserver kube-controller-manager kube-scheduler
         systemctl start etcd kube-apiserver kube-controller-manager kube-scheduler
@@ -431,9 +452,13 @@ bootstrapping_control_plane () {
         # Wait until kube-apiserver is active
         echo "[WAIT] Waiting for kube-apiserver to become active..."
         while true; do
-            status=$(systemctl is-active kube-apiserver)
-            echo "[WAIT] Current kube-apiserver status: $status"
-            if [[ "$status" == "active" ]]; then
+            status=$(systemctl is-active kube-apiserver 2>/dev/null)
+            exit_code=$?
+            echo "[WAIT] Current kube-apiserver status: $status (exit code: $exit_code)"
+            if [[ $exit_code -eq 3 ]]; then
+                echo "[ERROR] kube-apiserver service not found (systemctl exit code 3). Exiting wait loop."
+                break
+            elif [[ "$status" == "active" ]]; then
                 echo "[CONTROL_PLANE] kube-apiserver is active."
                 break
             else
@@ -443,12 +468,15 @@ bootstrapping_control_plane () {
         done
 
         systemctl status kube-apiserver --no-pager
+        sleep 3
 
-        journalctl -u kube-apiserver | cat
+        journalctl -u kube-apiserver | head -100
+        journalctl -u kube-apiserver | tail -10
+        sleep 3
 
         mkdir -p "${HOME_DIR}"/.kube
         cp "${HOME_DIR}"/kubernetes/CERT/admin.kubeconfig "${HOME_DIR}"/.kube/config
-        chown -R ubuntu:ubuntu "${HOME_DIR}"/.kube
+        chown -R ubuntu:ubuntu "${HOME_DIR}"
 
         kubectl cluster-info --kubeconfig "${HOME_DIR}"/kubernetes/CERT/admin.kubeconfig
 
