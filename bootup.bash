@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 HOME_DIR="/home/ubuntu"
 MACHINE_INVENTORY="${HOME_DIR}/machine.txt"
@@ -597,39 +597,107 @@ setup_network_routes() {
     fi
 }
 
+# -----------------------------
+# Auto-generated usage function
+# -----------------------------
 usage() {
-    echo "Usage: $0 [OPTIONS]"
-    echo "  -h, --help    Display this help message"
-    echo "*#*#*#*#*#*#*#*#*#*#* ${0} setup_base -> to install all dependencies *#*#*#*#*#*#*#*#*#*#*"
-    echo "*#*#*#*#*#*#*#*#*#*#* ${0} setup_certificate -> to bring up certificate for all components *#*#*#*#*#*#*#*#*#*#*"
-    echo "*#*#*#*#*#*#*#*#*#*#* ${0} setup_kubeconfig -> to configure kubeconfig for all components & data encryption encryption-config.yaml *#*#*#*#*#*#*#*#*#*#*"
-    echo "*#*#*#*#*#*#*#*#*#*#* ${0} setup_server -> to bring up the Kubernetes API server *#*#*#*#*#*#*#*#*#*#*"
-    # ... other options
+    echo "Usage: $0 [OPTION]"
+    echo
+    echo "Options (INSTALL_TYPE values):"
+
+    # For each declared function, print the name and the comment above it
+    for func in $(declare -F | awk '{print $3}' | grep -v '^usage$'); do
+        desc=$(awk "/^$func\(\)/{print prev; exit}{prev=\$0}" "$0" | sed 's/^[[:space:]]*#\s*//')
+        printf "  %-28s %s\n" "$func" "$desc"
+    done
+
+    echo
+    echo "Other options:"
+    echo "  -h, --help                  Show this help message and exit"
+    echo
+    echo "Examples:"
+    echo "  $0 install_dependencies"
+    echo "  $0 bootstrapping_worker_node"
+    echo "  $0 --help"
 }
 
-# =========================
-# Main Control Flow
-# =========================
-INSTALL_TYPE=$1
+# Install all required base dependencies
+base-bringup () {
+    # This function installs all required base dependencies, clones the Kubernetes the Hard Way repo,
+    # downloads and prepares binaries, sets up SSH keys, and configures /etc/hosts for the cluster.
+    # Finally, it verifies the installation of dependencies.
+    echo "[INSTALL-DEPENDENCIES] Installing base dependencies..."
+    install_dependencies
+}
+
+# Set up and install certificates
+install-certificates() {
+    # This function sets up the CA, generates certificates for all Kubernetes components,
+    # and distributes them to the appropriate nodes.
+    # It ensures that each component has the necessary certificates and keys for secure communication.
+    # Finally, it verifies the certificate installation.
+    echo "[INSTALL-CERTIFICATES] Installing certificates for all components..."
+    certificate_installation
+}
+
+# Configure kubeconfig for cluster access
+install-kubeconfig () {
+    # This function configures kubeconfig for all components and sets up data encryption.
+    # It ensures that each component has the necessary kubeconfig files to authenticate and communicate
+    # with the Kubernetes API server.
+    # Additionally, it sets up data encryption for sensitive information.
+    echo "[INSTALL-KUBECONFIG] Configuring kubeconfig for all components and setup up data encryption..."
+    kubeconfig_configuration
+}
+
+# Bootstrap and configure the control plane
+server-bringup () {
+    # This function bootstraps the control plane by initializing the API server, etcd, and other components.
+    # It ensures that the control plane is properly configured and running.
+    # This includes setting up necessary systemd services and configurations.
+    # Finally, it starts the control plane services.
+    echo "[CONTROL-PLANE-BRINGUP] Bootstrapping control plane by initializing the API server, etcd, and other components..."
+    bootstrapping_control_plane
+}
+
+# Bootstrap and configure a worker node
+worker-bringup () {
+    # This function bootstraps a worker node by installing necessary components and configuring services.
+    # It ensures that the worker node can communicate with the control plane and other nodes.
+    # This includes setting up kubelet and kube-proxy.
+    # Additionally, it configures the necessary systemd services.
+    # Finally, it starts the kubelet and kube-proxy services.
+    echo "[WORKER-NODE-BRINGUP] Bootstrapping worker node by installing necessary components and configuring services..."
+    bootstrapping_worker_node
+}
+
+# Configure required network routes
+setup_network () {
+    # This function sets up necessary network routes for communication between nodes.
+    # It ensures that all nodes can communicate with each other over the required ports.
+    # This includes setting up routes for the API server, etcd, and other components.
+    echo "Setting up network routes..."
+    setup_network_routes
+}
+
+# -----------------------------
+# Dispatcher
+# -----------------------------
+
+# Support both: env var and CLI argument
+INSTALL_TYPE="${INSTALL_TYPE:-$1}"
 
 case "$INSTALL_TYPE" in
-    setup_base)
-        install_dependencies
-        ;;
-    setup_certificate)
-        certificate_installation
-        ;;
-    setup_kubeconfig)
-        kubeconfig_configuration
-        ;;
-    setup_control_plane)
-        bootstrapping_control_plane
-        ;;
-    setup_worker_node)
-        bootstrapping_worker_node
+    -h|--help|"")
+        usage
+        exit 0
         ;;
     *)
-        usage
-        exit 1
+        if declare -F "$INSTALL_TYPE" >/dev/null; then
+            "$INSTALL_TYPE"
+        else
+            usage
+            exit 1
+        fi
         ;;
 esac
