@@ -616,8 +616,12 @@ usage() {
     echo "  -h, --help                  Show this help message and exit"
     echo
     echo "Examples:"
-    echo "  $0 install_dependencies"
-    echo "  $0 bootstrapping_worker_node"
+    echo "  $0 base-bringup"
+    echo "  $0 install-certificates"
+    echo "  $0 install-kubeconfig"
+    echo "  $0 server-bringup"
+    echo "  $0 worker-bringup"
+    echo "  $0 setup-network"
     echo "  $0 --help"
 }
 
