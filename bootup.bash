@@ -10,6 +10,9 @@ K8S_API_SERVER_PORT=6443
 CURRENT_HOSTNAME=$(hostname)
 API_SERVER_NAMESPACE="${K8S_API_SERVER#https://}"
 
+NODE_LIST=$(awk '{if ($5 ~ /node/) print $5}' "${MACHINE_INVENTORY}" | sort -u)
+echo "List of nodes available ${NODE_LIST}"
+
 #==========================#
 #   Function Definitions   #
 #==========================#
@@ -141,7 +144,7 @@ certificate_installation() {
         # -config ca.conf: Uses the ca.conf configuration file for certificate details like distinguished name, extensions, etc.
         # -out ca.crt: Writes the final certificate to ca.crt.
         ls *.crt *.key *.conf
-        for host in node-0 node-1; do
+        for host in ${NODE_LIST[@]}; do
             echo "[CERTIFICATE] Creating directory on ${host}..."
             ssh root@${host} mkdir -p "${HOME_DIR}"/kubernetes/CERT
             echo "[CERTIFICATE] Copying ca.conf, ca.key and ca.crt to ${host}..."
@@ -153,7 +156,7 @@ certificate_installation() {
     echo "[CERTIFICATE] Creating certificates for Kubernetes components..."
     pushd "${HOME_DIR}"/kubernetes/CERT &>/dev/null
     certs=(
-        "admin" "node-0" "node-1"
+        "admin" "${NODE_LIST[@]}"
         "kube-proxy" "kube-scheduler"
         "kube-controller-manager"
         "kube-api-server"
@@ -181,7 +184,7 @@ certificate_installation() {
     if [[ "server" == "${CURRENT_HOSTNAME}" ]]; then
         echo "**************** SERVER ----> NODES ****************"
         echo "[CERTIFICATE] Running on the server host, proceeding with certificate distribution to each nodes..."
-        for host in node-0 node-1; do
+        for host in ${NODE_LIST[@]}; do
             echo "[CERTIFICATE] Copying to ${host}..."
             ssh root@${host} rm -rf /var/lib/kubelet
             ssh root@${host} mkdir /var/lib/kubelet
@@ -221,7 +224,7 @@ kubeconfig_configuration() {
     )
 
     if [[ "server" == "${CURRENT_HOSTNAME}" ]]; then
-        for host in node-0 node-1; do
+        for host in ${NODE_LIST[@]}; do
 
             echo "[KUBECONFIG] Setting up cluster information in the kubeconfig for ${host}..."
             echo "[KUBECONFIG] API Server is ${K8S_API_SERVER} and Port is ${K8S_API_SERVER_PORT}"
@@ -344,7 +347,7 @@ kubeconfig_configuration() {
     if [[ "server" == "${CURRENT_HOSTNAME}" ]]; then
         data_encryption
         generate_front_proxy_certificates
-        for host in node-0 node-1; do
+        for host in ${NODE_LIST[@]}; do
             echo "[KUBECONFIG] Copying server to ${host}..."
             ssh "root@${host}" "mkdir -p /var/lib/{kube-proxy,kubelet}"
             scp kube-proxy.kubeconfig "root@${host}:/var/lib/kube-proxy/kubeconfig"
@@ -559,7 +562,7 @@ generate_front_proxy_certificates () {
         cp front-proxy-ca.crt front-proxy-client.crt front-proxy-client.key /var/lib/kubernetes/
         ls -l /var/lib/kubernetes/front-proxy-*
         sleep 2
-        for host in node-0 node-1; do
+        for host in ${NODE_LIST[@]}; do
             echo "[FRONT-PROXY] Copying front-proxy certificates to ${host}..."
             scp front-proxy-ca.crt root@${host}:"${HOME_DIR}"/kubernetes/CERT/
             scp front-proxy-client.crt root@${host}:"${HOME_DIR}"/kubernetes/CERT/
@@ -643,14 +646,14 @@ setup_network_routes() {
 
     if [[ "server" == "${CURRENT_HOSTNAME}" ]]; then
         echo "[NETWORK] Setting up network routes on server for worker nodes..."
-        for host in node-0 node-1; do
+        for host in ${NODE_LIST[@]}; do
             echo "[NETWORK] Adding route to ${host} subnet via ${host} IP..."
             echo "ip route add $(grep "$host" "${MACHINE_INVENTORY}" | cut -d " " -f 4) via $(grep "$host" "${MACHINE_INVENTORY}" | cut -d " " -f 1)"
             ip route add $(grep "${host}" "${MACHINE_INVENTORY}" | cut -d " " -f 4) via $(grep "${host}" "${MACHINE_INVENTORY}" | cut -d " " -f 1)
         done
         echo "[NETWORK] Setting up network routes on worker nodes for other worker nodes..."
-        for src in node-0 node-1; do
-            for dst in node-0 node-1; do
+        for src in ${NODE_LIST[@]}; do
+            for dst in ${NODE_LIST[@]}; do
                 if [ "${src}" != "${dst}" ]; then
                     echo "[NETWORK] On ${src}, adding route to ${dst} subnet via ${SERVER_IP}..."
                     echo "ssh root@${src} \"ip route add $(grep ${dst} ${MACHINE_INVENTORY} | cut -d ' ' -f 1) via $(grep ${dst} ${MACHINE_INVENTORY} | cut -d ' ' -f 4)\""

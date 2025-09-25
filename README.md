@@ -41,3 +41,6 @@ This tutorial requires four (4) ARM64 or AMD64 based virtual or physical machine
 * [Provisioning Pod Network Routes](docs/11-pod-network-routes.md)
 * [Smoke Test](docs/12-smoke-test.md)
 * [Cleaning Up](docs/13-cleanup.md)
+
+## Automation Script
+For a streamlined and reproducible cluster setup, refer to the [automation script documentation](docs/bootup.md). This guide explains how the provided automation script translates each manual step into a fully automated process, detailing the logic and flow for technical users.
