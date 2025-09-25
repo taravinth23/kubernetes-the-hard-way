@@ -27,7 +27,15 @@ ExecStart=/usr/local/bin/kube-apiserver \
   --tls-cert-file=/var/lib/kubernetes/kube-api-server.crt \
   --tls-private-key-file=/var/lib/kubernetes/kube-api-server.key \
   --service-cluster-ip-range=10.32.0.0/24 \
-  --v=2
+  --v=2 \
+  --proxy-client-cert-file=/var/lib/kubernetes/front-proxy-client.crt \
+  --proxy-client-key-file=/var/lib/kubernetes/front-proxy-client.key \
+  --requestheader-client-ca-file=/var/lib/kubernetes/front-proxy-ca.crt \
+  --requestheader-allowed-names=front-proxy-client \
+  --requestheader-extra-headers-prefix=X-Remote-Extra- \
+  --requestheader-group-headers=X-Remote-Group \
+  --requestheader-username-headers=X-Remote-User
+
 Restart=on-failure
 RestartSec=5
 

@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 
+set -euo pipefail
+
 HOME_DIR="/home/ubuntu"
 MACHINE_INVENTORY="${HOME_DIR}/machine.txt"
 CLUSTER_NAME="kubernetes-the-hard-way"
 K8S_API_SERVER="https://server.kubernetes.local"
 K8S_API_SERVER_PORT=6443
 CURRENT_HOSTNAME=$(hostname)
+API_SERVER_NAMESPACE="${K8S_API_SERVER#https://}"
 
 #==========================#
 #   Function Definitions   #
@@ -66,9 +69,10 @@ install_dependencies () {
                 echo "[BASE] Updating /etc/hosts for current host ${HOST}..."
                 if [[ "server" == "${HOST}" ]]; then
                     echo "# Control planes Setting for api-server information"
-                    sed -i "s/^127\.0\.0\.1\s\+localhost.*/127.0.0.1 ${HOST} ${FQDN} localhost ${K8S_API_SERVER} api.k8s.local kubernetes/" /etc/hosts
+                    echo "127.0.0.1 ${HOST} ${FQDN} localhost ${API_SERVER_NAMESPACE} api.k8s.local kubernetes"
+                    sed -i "s|^127\.0\.0\.1\s\+localhost.*|127.0.0.1 ${HOST} ${FQDN} localhost ${API_SERVER_NAMESPACE} api.k8s.local kubernetes|" /etc/hosts
                 else
-                    sed -i "s/^127\.0\.0\.1\s\+localhost.*/127.0.0.1 ${HOST} ${FQDN} localhost/" /etc/hosts
+                    sed -i "s|^127\.0\.0\.1\s\+localhost.*|127.0.0.1 ${HOST} ${FQDN} localhost|" /etc/hosts
                 fi
                 echo "[BASE] Setting hostname..."
                 hostnamectl set-hostname ${HOST}
@@ -81,7 +85,7 @@ install_dependencies () {
                 if ! grep -q "$IP" /etc/hosts; then
                     if [[ "server" == "${HOST}" ]]; then
                         echo "# Control planes Setting for api-server information"
-                        echo "${IP} ${FQDN} ${HOST} ${K8S_API_SERVER} api.k8s.local kubernetes" >> /etc/hosts
+                        echo "${IP} ${FQDN} ${HOST} ${API_SERVER_NAMESPACE} api.k8s.local kubernetes" >> /etc/hosts
                     else
                         echo "${IP} ${FQDN} ${HOST}" >> /etc/hosts
                     fi
@@ -285,7 +289,7 @@ kubeconfig_configuration() {
            API_SERVER_LOCAL="https://127.0.0.1"
            USER_PERMISSIONS="admin"
         else
-            API_SERVER_LOCAL="$K8S_API_SERVER"
+            API_SERVER_LOCAL="${K8S_API_SERVER}"
             USER_PERMISSIONS="system:${service}"
         fi
         
@@ -339,6 +343,7 @@ kubeconfig_configuration() {
     echo "[KUBECONFIG] let's distribute the kubernetes configuration files..."
     if [[ "server" == "${CURRENT_HOSTNAME}" ]]; then
         data_encryption
+        generate_front_proxy_certificates
         for host in node-0 node-1; do
             echo "[KUBECONFIG] Copying server to ${host}..."
             ssh "root@${host}" "mkdir -p /var/lib/{kube-proxy,kubelet}"
@@ -388,12 +393,15 @@ bootstrapping_control_plane () {
                     cp "${HOME_DIR}/kubernetes/kubernetes-the-hard-way/configs/10-bridge.conf" "${HOME_DIR}/worker_certificate_${HOST}/10-bridge.conf"
                     ls -l "${HOME_DIR}/worker_certificate_${HOST}/10-bridge.conf"
                     sleep 3
-                    sed "s|SUBNET|$SUBNET|g" "${HOME_DIR}/worker_certificate_${HOST}/10-bridge.conf" > "${HOME_DIR}/worker_certificate_${HOST}/10-bridge.conf"
-                    cat "${HOME_DIR}/worker_certificate_${HOST}/10-bridge.conf"
+                    pushd "${HOME_DIR}/worker_certificate_${HOST}" &>/dev/null
+                    echo "[CONTROL_PLANE] Replacing SUBNET in 10-bridge.conf with actual value ${SUBNET}..."
+                    sed -i "s|SUBNET|$SUBNET|g" 10-bridge.conf
+                    cat 10-bridge.conf
                     sleep 2
                     ssh "root@${HOST}" "mkdir -p /etc/cni/net.d"
-                    scp "${HOME_DIR}/worker_certificate_${HOST}/10-bridge.conf" root@${HOST}:/etc/cni/net.d/10-bridge.conf
+                    scp 10-bridge.conf root@${HOST}:/etc/cni/net.d/10-bridge.conf
                     ssh "root@${HOST}" "cat /etc/cni/net.d/10-bridge.conf"
+                    popd &>/dev/null
                     sleep 3
                     scp "${HOME_DIR}"/kubernetes/kubernetes-the-hard-way/configs/99-loopback.conf root@${HOST}:/etc/cni/net.d/99-loopback.conf
                     ssh "root@${HOST}" "cat /etc/cni/net.d/99-loopback.conf"
@@ -511,6 +519,61 @@ bootstrapping_control_plane () {
     
 }
 
+generate_front_proxy_certificates () {
+    # The API server is the central brain of Kubernetes.
+    # Kubernetes control plane components don’t all talk directly to each other with their own client certs.
+    # Instead, some API requests are proxied through the kube-apiserver.
+    # The API server acts as a proxy in the middle.
+    # kubectl exec, kubectl logs, or kubectl port-forward → these go through the API server to a kubelet.
+    # To secure this proxying, Kubernetes uses a front-proxy CA and front-proxy client certs.
+    # The API server trusts requests signed by the front-proxy CA.
+    # The aggregator or other components present a front-proxy-client certificate to prove authenticity.
+
+    # Who actually needs the front-proxy?
+
+    # API Aggregation Layer: when you install aggregated APIs (e.g., metrics-server, custom API extensions).
+    # Kube-apiserver itself: needs
+    # --requestheader-client-ca-file=/var/lib/kubernetes/front-proxy-ca.crt
+    # --proxy-client-cert-file=/var/lib/kubernetes/front-proxy-client.crt
+    # --proxy-client-key-file=/var/lib/kubernetes/front-proxy-client.key
+    
+    echo "[FRONT-PROXY] Generating front-proxy CA and client certificates..."
+    pushd "${HOME_DIR}"/kubernetes/CERT &>/dev/null
+
+    echo "[FRONT-PROXY] Creating the front-proxy private key..."
+    openssl genrsa -out front-proxy-ca.key 4096
+    echo "[FRONT-PROXY] Creating the front-proxy CA certificate..."
+    openssl req -x509 -new -sha512 -key front-proxy-ca.key -days 3653 -config ca.conf -subj "/CN=front-proxy-ca" -out front-proxy-ca.crt
+    echo "[FRONT-PROXY] Creating the front-proxy client private key..."
+    openssl genrsa -out front-proxy-client.key 4096
+    echo "[FRONT-PROXY] Creating the front-proxy client certificate signing request (CSR)..."
+    openssl req -new -key front-proxy-client.key -config ca.conf -subj "/CN=front-proxy-client/O=system:auth-proxies" -out front-proxy-client.csr
+    echo "[FRONT-PROXY] Signing the front-proxy client CSR with the front-proxy CA to create the client certificate..."
+    openssl x509 -req -days 3653 -in front-proxy-client.csr -CA front-proxy-ca.crt -CAkey front-proxy-ca.key -CAcreateserial -out front-proxy-client.crt
+    echo "[FRONT-PROXY] Listing the generated front-proxy files..."
+    ls -l front-proxy-ca.* front-proxy-client.*
+    sleep 2
+
+    if [[ "server" == "${CURRENT_HOSTNAME}" ]]; then
+        echo "[FRONT-PROXY] Copying front-proxy certificates to /var/lib/kubernetes on server..."
+        cp front-proxy-ca.crt front-proxy-client.crt front-proxy-client.key /var/lib/kubernetes/
+        ls -l /var/lib/kubernetes/front-proxy-*
+        sleep 2
+        for host in node-0 node-1; do
+            echo "[FRONT-PROXY] Copying front-proxy certificates to ${host}..."
+            scp front-proxy-ca.crt root@${host}:"${HOME_DIR}"/kubernetes/CERT/
+            scp front-proxy-client.crt root@${host}:"${HOME_DIR}"/kubernetes/CERT/
+            scp front-proxy-client.key root@${host}:"${HOME_DIR}"/kubernetes/CERT/
+        done
+    else
+        if echo "$CURRENT_HOSTNAME" | grep -q "node"; then
+            echo "[FRONT-PROXY] Running on a worker node, skipping front-proxy setup on server nodes..."
+        fi
+    fi
+    popd &>/dev/null
+    echo "[FRONT-PROXY] Front-proxy setup completed."
+}
+
 bootstrapping_worker_node () {
     if echo "$CURRENT_HOSTNAME" | grep -q "node"; then
         echo "[WORKER] Bootstrapping Worker Node..."
@@ -567,11 +630,16 @@ bootstrapping_worker_node () {
         journalctl -u kube-proxy | tail -10
         sleep 3
         echo "[WORKER] Worker node setup completed."
+    else
+        if [[ "server" == "${CURRENT_HOSTNAME}" ]]; then
+            echo "[WORKER] Running on server host, skipping worker node setup..."
+        fi
     fi
 }
 
+
 setup_network_routes() {
-    SERVER_IP=$(grep server machines.txt | cut -d " " -f 1)
+    SERVER_IP=$(grep server "${MACHINE_INVENTORY}" | cut -d " " -f 1)
 
     if [[ "server" == "${CURRENT_HOSTNAME}" ]]; then
         echo "[NETWORK] Setting up network routes on server for worker nodes..."
@@ -676,7 +744,7 @@ worker-bringup () {
 }
 
 # Configure required network routes
-setup_network () {
+setup-network () {
     # This function sets up necessary network routes for communication between nodes.
     # It ensures that all nodes can communicate with each other over the required ports.
     # This includes setting up routes for the API server, etcd, and other components.
