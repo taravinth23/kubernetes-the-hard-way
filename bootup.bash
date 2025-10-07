@@ -2,6 +2,7 @@
 
 set -euo pipefail
 
+ARCH=$(dpkg --print-architecture)
 HOME_DIR="/home/ubuntu"
 MACHINE_INVENTORY="${HOME_DIR}/machine.txt"
 CLUSTER_NAME="kubernetes-the-hard-way"
@@ -12,6 +13,14 @@ API_SERVER_NAMESPACE="${K8S_API_SERVER#https://}"
 
 NODE_LIST=$(awk '{if ($5 ~ /node/) print $5}' "${MACHINE_INVENTORY}" | sort -u)
 echo "List of nodes available ${NODE_LIST}"
+
+export K8S_VERSION=$(curl -sSL https://dl.k8s.io/release/stable.txt)
+export CILIUM_CLI_VERSION=$(curl -s https://raw.githubusercontent.com/cilium/cilium-cli/main/stable.txt)
+export CRI_VERSION=$(wget -qO- https://api.github.com/repos/kubernetes-sigs/cri-tools/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+export RUNC_VERSION=$(wget -qO- https://api.github.com/repos/opencontainers/runc/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+export CNI_VERSION=$(wget -qO- https://api.github.com/repos/containernetworking/plugins/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+export CONTAINERD_VERSION=$(wget -qO- https://api.github.com/repos/containerd/containerd/releases/latest | grep '"tag_name":' | sed -E 's/.*"v?([^"]+)".*/\1/')
+export ETCD_VERSION=$(wget -qO- https://api.github.com/repos/etcd-io/etcd/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
 
 #==========================#
 #   Function Definitions   #
@@ -25,17 +34,17 @@ install_dependencies () {
     mkdir kubernetes && cd "${HOME_DIR}"/kubernetes
     git clone --depth 1 https://github.com/taravinth23/kubernetes-the-hard-way.git
     pushd "${HOME_DIR}"/kubernetes/kubernetes-the-hard-way &>/dev/null
-    ARCH=$(dpkg --print-architecture)
     echo "[BASE] Display downloading dependencies..."
     cat downloads-${ARCH}.txt
     echo "[BASE] Downloading dependencies..."
-    wget -q --show-progress --https-only --timestamping -P downloads -i downloads-${ARCH}.txt
+    wget -q --show-progress --https-only --timestamping -P downloads -i download.txt
     echo "[BASE] Untar contents -> specific folders..."
     mkdir -p downloads/{client,cni-plugins,controller,worker}
-    tar -xvf downloads/crictl-v1.32.0-linux-${ARCH}.tar.gz -C downloads/worker/
-    tar -xvf downloads/containerd-2.1.0-beta.0-linux-${ARCH}.tar.gz --strip-components 1 -C downloads/worker/
-    tar -xvf downloads/cni-plugins-linux-${ARCH}-v1.6.2.tgz -C downloads/cni-plugins/
-    tar -xvf downloads/etcd-v3.6.0-rc.3-linux-${ARCH}.tar.gz -C downloads/ --strip-components 1 etcd-v3.6.0-rc.3-linux-${ARCH}/etcdctl etcd-v3.6.0-rc.3-linux-${ARCH}/etcd
+    tar -xvf downloads/crictl-${CRI_VERSION}-linux-${ARCH}.tar.gz -C downloads/worker/
+    tar -xvf downloads/containerd-${CONTAINERD_VERSION}-linux-${ARCH}.tar.gz --strip-components 1 -C downloads/worker/
+    tar -xvf downloads/cni-plugins-linux-${ARCH}-${CNI_VERSION}.tgz -C downloads/cni-plugins/
+    tar -xvf downloads/etcd-${ETCD_VERSION}-linux-${ARCH}.tar.gz -C downloads/ --strip-components 1 etcd-${ETCD_VERSION}-linux-${ARCH}/etcdctl etcd-${ETCD_VERSION}-linux-${ARCH}/etcd
+    tar -xvf downloads/cilium-linux-${ARCH}.tar.gz -C downloads/worker/ 
     echo "[BASE] Move download to respective folders..."
     mv downloads/{etcdctl,kubectl} downloads/client/
     mv downloads/{etcd,kube-apiserver,kube-controller-manager,kube-scheduler} downloads/controller/
@@ -413,13 +422,17 @@ bootstrapping_control_plane () {
         fi
 
         echo "[ETCD] Copying etcd and Kubernetes controller binaries to /usr/local/bin..."
-        cp "${HOME_DIR}"/kubernetes/kubernetes-the-hard-way/downloads/controller/etcd /usr/local/bin/
-        cp "${HOME_DIR}"/kubernetes/kubernetes-the-hard-way/downloads/client/etcdctl /usr/local/bin/
-        cp "${HOME_DIR}"/kubernetes/kubernetes-the-hard-way/downloads/controller/kube-apiserver /usr/local/bin/
-        cp "${HOME_DIR}"/kubernetes/kubernetes-the-hard-way/downloads/controller/kube-controller-manager /usr/local/bin/
-        cp "${HOME_DIR}"/kubernetes/kubernetes-the-hard-way/downloads/controller/kube-scheduler /usr/local/bin/
+        pushd "${HOME_DIR}"/kubernetes/kubernetes-the-hard-way/downloads &>/dev/null
+        cp controller/etcd /usr/local/bin/
+        cp client/etcdctl /usr/local/bin/
+        cp controller/kube-apiserver /usr/local/bin/
+        cp controller/kube-controller-manager /usr/local/bin/
+        cp controller/kube-scheduler /usr/local/bin/
+        cp downloads/worker/cilium /usr/local/bin/
+        popd &>/dev/null
         ls -l /usr/local/bin/etcd*
         ls -l /usr/local/bin/kube*
+        ls -l /usr/local/bin/cilium
         sleep 2
         echo "[ETCD] Creating necessary directories for etcd..."
         mkdir -p /etc/etcd /var/lib/etcd /etc/kubernetes/config /var/lib/kubernetes/
@@ -589,10 +602,18 @@ bootstrapping_worker_node () {
         cp "${HOME_DIR}"/kubernetes/kubernetes-the-hard-way/downloads/cni-plugins/* /opt/cni/bin/
         echo "[WORKER] Copying worker binaries to /usr/local/bin..."
         pushd "${HOME_DIR}"/kubernetes/kubernetes-the-hard-way/downloads/worker &>/dev/null
-        echo "[WORKER] Copying crictl, kube-proxy, kubelet, and runc to /usr/local/bin..."
-        cp crictl kube-proxy kubelet runc /usr/local/bin/
+        echo "[WORKER] Copying cilium, crictl, kube-proxy, kubelet, and runc to /usr/local/bin..."
+        cp crictl kube-proxy kubelet runc cilium /usr/local/bin/
         cp containerd containerd-shim-runc-v2 containerd-stress /bin/
         popd &>/dev/null
+        echo "[WORKER] Verifying the copied binaries..."
+        ls -l /usr/local/bin/cilium
+        ls -l /usr/local/bin/crictl
+        ls -l /usr/local/bin/kube-proxy
+        ls -l /usr/local/bin/kubelet
+        ls -l /usr/local/bin/runc
+        ls -l /bin/containerd*
+        sleep 2 
         echo "[WORKER] Setting up containerd..."
         cp "${HOME_DIR}"/kubernetes/kubernetes-the-hard-way/downloads/cni-plugins/* /opt/cni/bin/
         echo "[WORKER] Loading br-netfilter module..."
@@ -640,8 +661,30 @@ bootstrapping_worker_node () {
     fi
 }
 
+setup_cilium_networking() {
+    if echo "$CURRENT_HOSTNAME" | grep -q "node"; then
+        echo "[CILIUM] Setting up Cilium networking on worker node..."
+        echo "[CILIUM] Removing any existing CNI configurations..."
+        rm -rf /etc/cni/net.d/*
+        if systemctl list-units --type=service | grep -q kube-proxy; then
+            echo "[CILIUM] Stopping and disabling kube-proxy service..."
+            systemctl stop kube-proxy
+            systemctl disable --now kube-proxy || true
+        fi
+    fi
+        echo "[CILIUM] Installing Cilium CLI..."
+        cilium install --version ${CILIUM_VERSION} --config monitor-aggregation=medium \
+            --config kube-proxy-replacement=strict --config bpf-lb-masquerade=true \
+            --config auto-direct-node-routes=true --config tunnel=vxlan
+        echo "[CILIUM] Verifying Cilium installation..."
+        cilium status --wait
+        cilium connectivity test
+        echo "[CILIUM] Cilium networking setup completed."
+        echo "[CILIUM] Cilium CLI installed successfully."
+    fi
+}
 
-setup_network_routes() {
+setup_manual_network_routes() {
     SERVER_IP=$(grep server "${MACHINE_INVENTORY}" | cut -d " " -f 1)
 
     if [[ "server" == "${CURRENT_HOSTNAME}" ]]; then
@@ -752,7 +795,7 @@ setup-network () {
     # It ensures that all nodes can communicate with each other over the required ports.
     # This includes setting up routes for the API server, etcd, and other components.
     echo "Setting up network routes..."
-    setup_network_routes
+    setup_cilium_networking
 }
 
 # -----------------------------
